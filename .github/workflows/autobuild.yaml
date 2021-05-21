@@ -96,7 +96,7 @@ jobs:
         body: |
           Unstable snapshot of clangd on ${{ env.RELEASE_DATE }}.
 
-          Built from llvm/llvm-project@${{ env.LLVM_COMMIIT }}.
+          Built from ${{ env.LLVM_REPO }}@${{ env.LLVM_COMMIIT }}.
         prerelease: true
         draft: true
   # Build clangd using CMake/Ninja.
