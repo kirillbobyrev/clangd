@@ -143,7 +143,8 @@ jobs:
         - name: linux
           os: ubuntu-18.04
           preinstall: >
-            sudo apt-get install ninja-build libz-dev libc-ares-dev
+            sudo apt-get install ninja-build libz-dev libc-ares-dev &&
+            sudo apt-get remove -y libgcc-11-dev
           cflags: -O3 -gline-tables-only -DNDEBUG -include $GITHUB_WORKSPACE/.github/workflows/lib_compat.h
           cmake: >-
             "-DCMAKE_C_COMPILER=clang"
@@ -183,7 +184,7 @@ jobs:
         # We use the same version of gRPC for LLVM's clangd-ubuntu-tsan
         # buildbot.
         # https://github.com/llvm/llvm-zorg/blob/main/buildbot/google/docker/buildbot-clangd-ubuntu-clang/Dockerfile
-        ref: v1.36.3
+        ref: v1.33.2
         submodules: recursive
     - name: Build gRPC
       run: >
