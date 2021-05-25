@@ -36,20 +36,26 @@ jobs:
         sudo apt-get install jq
     - name: Clone scripts
       uses: actions/checkout@v2
-      # Use clangd/actions/pick after
-      # https://github.com/ramasilveyra/last-successful-gh-commit/issues/2 has
-      # been addressed.
-    - name: Push data to the file
+    - name: Pull repo from the inputs
+      if: ${{ github.event.inputs.repo == '' }}
+      run: |
+        echo "LLVM_REPO=llvm/llvm-project" >> commit.env
+    - name: Use the default repo
+      if: ${{ github.event.inputs.repo != '' }}
       run: |
         echo "LLVM_REPO=${{ github.event.inputs.repo }}" >> commit.env
+    # Use clangd/actions/pick after
+    # https://github.com/ramasilveyra/last-successful-gh-commit/issues/2 has
+    # been addressed.
     - name: Get commit hash for LLVM head
+      if: ${{ github.event.inputs.commit == '' }}
       run: >
         COMMIT=$(curl --fail --show-error
         "https://api.github.com/repos/llvm/llvm-project/commits/main" |
         jq ".sha" -r)
 
         echo "LLVM_COMMIT=$COMMIT" >> commit.env
-    - name: Push data to the file
+    - name: Push picked commit to the file
       if: ${{ github.event.inputs.commit != '' }}
       run: |
         echo "LLVM_COMMIT=${{ github.event.inputs.commit }}" >> commit.env
@@ -101,6 +107,7 @@ jobs:
       run: |
         echo "UPLOAD_URL=${{ steps.create_release.outputs.upload_url }}" >> release.env
         echo "TAG_NAME=${{ env.TAG_NAME }}" >> release.env
+        echo "RELEASE_ID=${{ steps.create_release.outputs.id }}"
     - name: Upload result
       uses: actions/upload-artifact@v2
       with:
@@ -284,9 +291,17 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
+    - name: Fetch release info
+      uses: actions/download-artifact@v1
+      with:
+        name:
+          release
+    - name: Update the env variables
+      run: >
+        cat release/release.env >> $GITHUB_ENV
     - name: Publish release
       run: >
         curl -XPATCH
         "-HAuthorization: Bearer ${{ secrets.RELEASE_TOKEN }}"
-        "https://api.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }}"
+        "https://api.github.com/repos/${{ github.repository }}/releases/${{ env.RELEASE_ID }}"
         "-d" '{"draft": false}'
