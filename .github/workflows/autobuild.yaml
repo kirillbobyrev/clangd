@@ -18,6 +18,10 @@ on:
         description: 'Repository to build from'
         required: false
         default: 'llvm/llvm-project'
+      tag:
+        description: 'Tag name'
+        required: false
+        default: ''
 jobs:
   # Choose the commit to build a release from.
   #
@@ -38,67 +42,70 @@ jobs:
     - name: Push data to the file
       run: |
         echo "LLVM_REPO=${{ github.event.inputs.repo }}" >> commit.env
-        echo -n "LLVM_COMMIT=" >> commit.env
     - name: Get commit hash for LLVM head
       run: >
-        curl --fail --show-error
+        COMMIT=$(curl --fail --show-error
         "https://api.github.com/repos/llvm/llvm-project/commits/main" |
-        jq ".sha" -r >> commit.env
-    - name: Upload result
-      if: ${{ github.event.inputs.commit == '' }}
-      uses: actions/upload-artifact@v2
-      with:
-        name: release
-        path: commit.env
-  pull_commit:
-    name: Pull LLVM commit from the inputs
-    runs-on: ubuntu-latest
-    steps:
+        jq ".sha" -r)
+
+        echo "LLVM_COMMIT=$COMMIT" >> commit.env
     - name: Push data to the file
+      if: ${{ github.event.inputs.commit != '' }}
       run: |
-        echo "LLVM_REPO=${{ github.event.inputs.repo }}" >> commit.env
         echo "LLVM_COMMIT=${{ github.event.inputs.commit }}" >> commit.env
     - name: Upload result
       uses: actions/upload-artifact@v2
-      if: ${{ github.event.inputs.commit != '' }}
       with:
-        name: release
+        name: env
         path: commit.env
   create_release:
     name: Create release
     runs-on: ubuntu-latest
-    # Because needs can not be pick || pull_commit, if: can not be used for the
-    # whole job (one of them will not be executed and the pipeline will not
-    # proceed). The solution is to make the final step of each job conditional,
-    # so that the uploaded artifact comes from the correct branch.
-    needs: [pick, pull_commit]
+    needs: pick
     steps:
     - name: Fetch target commit
       uses: actions/download-artifact@v1
       with:
         name:
-          release
+          env
     - name: Set target commit
       run: |
-        cat release/commit.env >> $GITHUB_ENV
+        cat env/commit.env >> $GITHUB_ENV
     - name: Compute release info
       run: |
         echo "RELEASE_COMMIT_SHORT=$(printf '%.12s' ${{ env.LLVM_COMMIT }})" >> $GITHUB_ENV
         echo "RELEASE_DATE=$(date -u +%Y%m%d)" >> $GITHUB_ENV
+    - name: Pull tag name
+      if: ${{ github.event.inputs.tag != '' }}
+      run: >
+        echo "TAG_NAME=${{ github.event.inputs.tag }}" >> $GITHUB_ENV
+    - name: Automatically create tag name
+      if: ${{ github.event.inputs.tag == '' }}
+      run: >
+        echo "TAG_NAME=snapshot_${{ env.RELEASE_DATE }}" >> $GITHUB_ENV
     - name: Create release
       uses: actions/create-release@master
-      id: release
+      id: create_release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: snapshot_${{ env.RELEASE_DATE }}
+        tag_name: ${{ env.TAG_NAME }}
         release_name: ${{ env.RELEASE_DATE }} @${{ env.RELEASE_COMMIT_SHORT }}
         body: |
           Unstable snapshot of clangd on ${{ env.RELEASE_DATE }}.
 
-          Built from ${{ env.LLVM_REPO }}@${{ env.LLVM_COMMIIT }}.
+          Built from ${{ env.LLVM_REPO }}@${{ env.LLVM_COMMIT }}.
         prerelease: true
         draft: true
+    - name: Preserve release info
+      run: |
+        echo "UPLOAD_URL=${{ steps.create_release.outputs.upload_url }}" >> release.env
+        echo "TAG_NAME=${{ env.TAG_NAME }}" >> release.env
+    - name: Upload result
+      uses: actions/upload-artifact@v2
+      with:
+        name: release
+        path: release.env
   # Build clangd using CMake/Ninja.
   #
   # This step is a template that runs on each OS, build config varies slightly.
@@ -136,8 +143,7 @@ jobs:
         - name: linux
           os: ubuntu-18.04
           preinstall: >
-            sudo apt-get install ninja-build libz-dev libc-ares-dev &&
-            sudo apt-get remove -y libgcc-11-dev
+            sudo apt-get install ninja-build libz-dev libc-ares-dev
           cflags: -O3 -gline-tables-only -DNDEBUG -include $GITHUB_WORKSPACE/.github/workflows/lib_compat.h
           cmake: >-
             "-DCMAKE_C_COMPILER=clang"
@@ -177,7 +183,7 @@ jobs:
         # We use the same version of gRPC for LLVM's clangd-ubuntu-tsan
         # buildbot.
         # https://github.com/llvm/llvm-zorg/blob/main/buildbot/google/docker/buildbot-clangd-ubuntu-clang/Dockerfile
-        ref: v1.33.2
+        ref: v1.36.3
         submodules: recursive
     - name: Build gRPC
       run: >
@@ -198,11 +204,17 @@ jobs:
       uses: actions/download-artifact@v1
       with:
         name:
+          env
+    - name: Fetch release info
+      uses: actions/download-artifact@v1
+      with:
+        name:
           release
     - name: Set target commit
       run: |
-        cat release/commit.env >> $GITHUB_ENV
-        echo "CLANGD_DIR=clangd_${{ github.event.release.tag_name }}" >> $GITHUB_ENV
+        cat env/commit.env >> $GITHUB_ENV
+        cat release/release.env >> $GITHUB_ENV
+        echo "CLANGD_DIR=clangd_${{ env.TAG_NAME }}" >> $GITHUB_ENV
       shell: bash
     - name: Clone LLVM
       uses: actions/checkout@v2
@@ -232,7 +244,6 @@ jobs:
     - name: Ninja
       run: >
         ninja -C ${{ env.CLANGD_DIR }} clangd clangd-indexer clangd-index-server
-        clangd-index-server-monitor
     - name: Archive clangd
       run: >
         7z a clangd.zip
@@ -245,15 +256,14 @@ jobs:
         ${{ env.CLANGD_DIR }}/LICENSE.TXT
         ${{ env.CLANGD_DIR }}/bin/clangd-indexer${{ matrix.config.binary_extension }}
         ${{ env.CLANGD_DIR }}/bin/clangd-index-server${{ matrix.config.binary_extension }}
-        ${{ env.CLANGD_DIR }}/bin/clangd-index-server-monitor${{ matrix.config.binary_extension }}
         ${{ env.CLANGD_DIR }}/lib/clang
     - name: Upload clangd asset
       uses: actions/upload-release-asset@v1.0.1
       env:
         GITHUB_TOKEN: "${{ secrets.RELEASE_TOKEN }}"
       with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_name: clangd-${{ matrix.config.name }}-${{ github.event.release.tag_name }}.zip
+        upload_url: ${{ env.UPLOAD_URL }}
+        asset_name: clangd-${{ matrix.config.name }}-${{ env.TAG_NAME }}.zip
         asset_path: clangd.zip
         asset_content_type: application/zip
     - name: Upload indexing-tools asset
@@ -261,8 +271,8 @@ jobs:
       env:
         GITHUB_TOKEN: "${{ secrets.RELEASE_TOKEN }}"
       with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_name: clangd_indexing_tools-${{ matrix.config.name }}-${{ github.event.release.tag_name }}.zip
+        upload_url: ${{ env.UPLOAD_URL }}
+        asset_name: clangd_indexing_tools-${{ matrix.config.name }}-${{ env.TAG_NAME }}.zip
         asset_path: indexing-tools.zip
         asset_content_type: application/zip
     - name: Check binary compatibility
