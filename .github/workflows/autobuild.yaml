@@ -107,7 +107,7 @@ jobs:
       run: |
         echo "UPLOAD_URL=${{ steps.create_release.outputs.upload_url }}" >> release.env
         echo "TAG_NAME=${{ env.TAG_NAME }}" >> release.env
-        echo "RELEASE_ID=${{ steps.create_release.outputs.id }}"
+        echo "RELEASE_ID=${{ steps.create_release.outputs.id }}" >> release.env
     - name: Upload result
       uses: actions/upload-artifact@v2
       with:
