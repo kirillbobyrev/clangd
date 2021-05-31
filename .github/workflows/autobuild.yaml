@@ -21,14 +21,9 @@ on:
       tag:
         description: 'Tag name'
         required: false
-        default: ''
 jobs:
-  # Choose the commit to build a release from.
-  #
-  # We want to avoid unbuildable revisions: choose the last green from CI.
-  # FIXME: The criteria should be some consistent set of buildbots passing.
-  pick:
-    name: Pick LLVM commit
+  create_environment:
+    name: Create build environment
     runs-on: ubuntu-latest
     steps:
     - name: Install deps
@@ -44,6 +39,10 @@ jobs:
       if: ${{ github.event.inputs.repo != '' }}
       run: |
         echo "LLVM_REPO=${{ github.event.inputs.repo }}" >> commit.env
+    # Choose the commit to build a release from.
+    #
+    # We want to avoid unbuildable revisions: choose the last green from CI.
+    # FIXME: The criteria should be some consistent set of buildbots passing.
     # Use clangd/actions/pick after
     # https://github.com/ramasilveyra/last-successful-gh-commit/issues/2 has
     # been addressed.
